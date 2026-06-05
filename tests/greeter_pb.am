@@ -85,3 +85,19 @@ public class GreeterService {
     }
 }
 
+// Typed gRPC client for demo.v1.Greeter — Dial then call methods directly.
+public class GreeterClient {
+    public Backend: GrpcClient
+
+    public GreeterClient(GrpcClient backend) { this.Backend = backend }
+    public static GreeterClient Dial(string host, int port) { return new GreeterClient(GrpcClient.Dial(host, port)) }
+
+    // Returns the decoded reply; on a non-OK status the reply
+    // message is the default-constructed HelloReply (check via a
+    // raw GrpcClient.Call if you need the status).
+    public HelloReply SayHello(HelloRequest rq) {
+        let reply: GrpcReply = this.Backend.Call("/demo.v1.Greeter/SayHello", rq.Encode())
+        return HelloReply.Decode(reply.Body)
+    }
+}
+

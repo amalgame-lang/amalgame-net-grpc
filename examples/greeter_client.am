@@ -1,0 +1,39 @@
+// examples/greeter_client.am — a typed gRPC client using the generated
+// GreeterClient stub. Dials the greeter_server, calls SayHello with a
+// typed HelloRequest, and prints the typed HelloReply. Fully typed, no
+// manual framing — the generated stub handles encode/Call/decode.
+//
+//   NS_GRPC_PORT=50051 greeter_client
+//
+// Same namespace as the generated tests/greeter_pb.am (Demo.V1).
+
+namespace Demo.V1
+
+import Amalgame.String
+import Amalgame.Net.Grpc
+
+public class Program {
+    static int EnvInt(string name, int dflt) {
+        var n: int = 0
+        @c {
+            const char* v = getenv((const char*) name);
+            n = (v && v[0]) ? atoi(v) : (long long) dflt;
+        }
+        return n
+    }
+
+    public static void Main(string[] args) {
+        let port: int = Program.EnvInt("NS_GRPC_PORT", 50051)
+        let cli: GreeterClient = GreeterClient.Dial("127.0.0.1", port)
+
+        let rq: HelloRequest = HelloRequest.New()
+        rq.name = "Ada"
+        let reply: HelloReply = cli.SayHello(rq)
+
+        if (reply.message == "Hello, Ada") {
+            Console.WriteLine("[PASS] typed client: GreeterClient.SayHello → \"" + reply.message + "\"")
+        } else {
+            Console.WriteLine("[FAIL] typed client got: \"" + reply.message + "\"")
+        }
+    }
+}

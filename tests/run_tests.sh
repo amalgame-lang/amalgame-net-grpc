@@ -137,6 +137,20 @@ else
             echo -e "${RED}[FAIL]${NC} grpcurl interop: $GOUT"; FAILED=1
         fi
     fi
+
+    # ── typed e2e: generated GreeterClient ↔ generated GreeterService ──
+    echo -e "\n── typed e2e: GreeterClient.SayHello ↔ GreeterService ──"
+    for ex in greeter_server greeter_client; do
+        "$AMC" -o "$BUILD_DIR/$ex" examples/$ex.am --external facade.am --external "$PB_DIR/facade.am" --external tests/greeter_pb.am >/dev/null 2>&1
+        gcc -O2 $PINC "$BUILD_DIR/$ex.c" "$BUILD_DIR/greeter.o" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" "$BUILD_DIR/pb.o" $LIBS -o "$BUILD_DIR/$ex" 2>"$BUILD_DIR/e" \
+            || { echo -e "${RED}$ex build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+    done
+    TPORT=50100
+    NS_GRPC_PORT=$TPORT "$BUILD_DIR/greeter_server" >/dev/null 2>&1 & TSRV=$!
+    sleep 0.6
+    TOUT="$(NS_GRPC_PORT=$TPORT timeout 15 "$BUILD_DIR/greeter_client")"; echo "$TOUT"
+    kill "$TSRV" 2>/dev/null
+    echo "$TOUT" | grep -q "\[PASS\]" || FAILED=1
 fi
 
 # ── end-to-end: AM gRPC client ↔ AM gRPC server over TCP (h2c) ─────
