@@ -81,6 +81,24 @@ from the grpc-status trailer. **Proven end-to-end:** an Amalgame client
 talks to an Amalgame `ServeH2c` server over TCP — echo round-trip incl. a
 NUL byte + `grpc-status 0` (`examples/grpc_h2c_client.am`).
 
+## Server streaming (v0.4.0)
+
+```amalgame
+// server: one request → N reply messages
+GrpcServer.New().RegisterStream("/feed.Feed/Items",
+    (req: GrpcRequest) => GrpcStreamReply.Ok(listOfMessageBytes))
+
+// client: collect every reply message
+let s = cli.CallStream("/feed.Feed/Items", requestBytes)
+// s.Messages : List<List<int>>  (s.Status from the grpc-status trailer)
+```
+
+The handler returns all messages at once (collect-then-send); on the
+wire they go out as successive length-prefixed frames before the single
+grpc-status trailer — a valid gRPC server-streaming response. Proven
+end-to-end (3 messages, binary-safe). True incremental flush + client/
+bidi streaming are later net-http work.
+
 ## Scope — honest
 
 **Remaining:** `.proto` IDL codegen + client stubs + streaming (the

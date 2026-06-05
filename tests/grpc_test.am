@@ -16,6 +16,13 @@ public class Program {
         l.Add(c)
         return l
     }
+    static GrpcStreamReply threeFrames(GrpcRequest req) {
+        var msgs: List<List<int>> = new List<List<int>>()
+        msgs.Add(req.Body)
+        msgs.Add(req.Body)
+        msgs.Add(req.Body)
+        return GrpcStreamReply.Ok(msgs)
+    }
     static bool listEq(List<int> a, List<int> b) {
         if (a.Count() != b.Count()) { return false }
         var i: int = 0
@@ -135,6 +142,28 @@ public class Program {
             pass = pass + 1
         } else {
             Console.WriteLine("[FAIL] ResponseFrame mismatch")
+            fail = fail + 1
+        }
+
+        // ── 8. server streaming: N replies → N frames → unframe all ──
+        let ssrv = GrpcServer.New().RegisterStream("/echo.Echo/Stream",
+            (req: GrpcRequest) => Program.threeFrames(req))
+        let sreply: GrpcStreamReply = ssrv.DispatchStream("/echo.Echo/Stream", GrpcFrame.Encode(Program.bytes(9, 0, 9)))
+        let sbody: List<int> = GrpcServer.StreamResponseBody(sreply)
+        // client-side: unframe all
+        let srdr = GrpcFrameReader.New(sbody)
+        var gotN: int = 0
+        var allEcho: bool = true
+        while (srdr.HasNext()) {
+            let m: List<int> = srdr.Next()
+            if (!Program.listEq(m, Program.bytes(9, 0, 9))) { allEcho = false }
+            gotN = gotN + 1
+        }
+        if (gotN == 3 && allEcho && sreply.Status == 0) {
+            Console.WriteLine("[PASS] server streaming: 3 framed replies round-trip (binary-safe)")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] streaming (n=" + String_FromInt(gotN) + ")")
             fail = fail + 1
         }
 

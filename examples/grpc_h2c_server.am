@@ -13,9 +13,18 @@
 
 namespace Example
 
+import Amalgame.Collections
 import Amalgame.Net.Grpc
 
 public class Program {
+    // server-streaming handler: echo the request message 3 times
+    static GrpcStreamReply echo3(GrpcRequest req) {
+        var msgs: List<List<int>> = new List<List<int>>()
+        msgs.Add(req.Body)
+        msgs.Add(req.Body)
+        msgs.Add(req.Body)
+        return GrpcStreamReply.Ok(msgs)
+    }
     static int EnvInt(string name, int dflt) {
         var n: int = 0
         @c {
@@ -32,6 +41,8 @@ public class Program {
         let srv = GrpcServer.New()
             .Register("/echo.Echo/Ping",
                 (req: GrpcRequest) => GrpcReply.Ok(req.Body))
+            .RegisterStream("/echo.Echo/Stream",
+                (req: GrpcRequest) => Program.echo3(req))
 
         let rc: int = srv.ServeH2c(port)
         Console.WriteLine("grpc_h2c_server: exited rc=" + String_FromInt(rc))

@@ -165,10 +165,47 @@ public class GrpcMethod {
 }
 
 // The server: a registry of unary methods + transport-agnostic dispatch.
-public class GrpcServer {
-    public Methods: List<GrpcMethod>
+// A server-streaming reply: zero or more response messages, then the
+// final grpc-status. v0.x uses the "collect then send" model — the
+// handler returns all messages at once; on the wire they go out as
+// successive length-prefixed frames followed by the grpc-status trailer
+// (a valid gRPC server-streaming response). True incremental flush is a
+// later net-http concern.
+public class GrpcStreamReply {
+    public Messages: List<List<int>>
+    public Status:   int
+    public Message:  string
+    public GrpcStreamReply(List<List<int>> messages, int status, string message) {
+        this.Messages = messages
+        this.Status   = status
+        this.Message  = message
+    }
+    public static GrpcStreamReply Ok(List<List<int>> messages) {
+        return new GrpcStreamReply(messages, 0, "")
+    }
+    public static GrpcStreamReply Error(int status, string message) {
+        return new GrpcStreamReply(new List<List<int>>(), status, message)
+    }
+}
 
-    public GrpcServer() { this.Methods = new List<GrpcMethod>() }
+// One registered server-streaming method.
+public class GrpcStreamMethod {
+    public Path:    string
+    public Handler: Closure<GrpcRequest, GrpcStreamReply>
+    public GrpcStreamMethod(string path, Closure<GrpcRequest, GrpcStreamReply> handler) {
+        this.Path = path
+        this.Handler = handler
+    }
+}
+
+public class GrpcServer {
+    public Methods:       List<GrpcMethod>
+    public StreamMethods: List<GrpcStreamMethod>
+
+    public GrpcServer() {
+        this.Methods = new List<GrpcMethod>()
+        this.StreamMethods = new List<GrpcStreamMethod>()
+    }
     public static GrpcServer New() { return new GrpcServer() }
 
     // Register a unary handler: (GrpcRequest) -> GrpcReply.
@@ -213,6 +250,49 @@ public class GrpcServer {
         return GrpcFrame.Encode(reply.Body)
     }
 
+    // ── server streaming ────────────────────────────────────────
+    // Register a server-streaming handler: one request → N reply
+    // messages (returned together; sent as successive frames).
+    public GrpcServer RegisterStream(string path, Closure<GrpcRequest, GrpcStreamReply> handler) {
+        this.StreamMethods.Add(new GrpcStreamMethod(path, handler))
+        return this
+    }
+    public GrpcStreamMethod lookupStream(string path) {
+        var i: int = 0
+        let n: int = this.StreamMethods.Count()
+        while (i < n) {
+            let m: GrpcStreamMethod = this.StreamMethods.Get(i)
+            if (m.Path == path) { return m }
+            i = i + 1
+        }
+        return null
+    }
+    // Dispatch a streaming request: unframe the request, run the handler.
+    public GrpcStreamReply DispatchStream(string path, List<int> requestFrame) {
+        let m: GrpcStreamMethod = this.lookupStream(path)
+        if (m == null) {
+            return GrpcStreamReply.Error(GrpcStatus.Unimplemented(), "method not found: " + path)
+        }
+        var msg: List<int> = new List<int>()
+        let fr = GrpcFrameReader.New(requestFrame)
+        if (fr.HasNext()) { msg = fr.Next() }
+        return m.Handler(GrpcRequest.New(msg))
+    }
+    // Concatenate every reply message as a length-prefixed frame — the
+    // DATA the frontend sends before the single grpc-status trailer.
+    public static List<int> StreamResponseBody(GrpcStreamReply reply) {
+        var out: List<int> = new List<int>()
+        var i: int = 0
+        let n: int = reply.Messages.Count()
+        while (i < n) {
+            let frame: List<int> = GrpcFrame.Encode(reply.Messages.Get(i))
+            var j: int = 0
+            while (j < frame.Count()) { out.Add(frame.Get(j)); j = j + 1 }
+            i = i + 1
+        }
+        return out
+    }
+
 
     // Serve gRPC over HTTP/2 cleartext (h2c) — the real end-to-end path.
     // Binds `port`, and for each request reads the :path + the framed
@@ -242,9 +322,17 @@ public class GrpcServer {
                         if (b >= 0) { body.Add(b) }
                         i = i + 1
                     }
-                    let reply: GrpcReply = this.Dispatch(path, body)
-                    let frame: List<int> = GrpcServer.ResponseFrame(reply)
-                    H2Conn.RespondGrpc(conn, frame, reply.Status, reply.Message)
+                    let sm: GrpcStreamMethod = this.lookupStream(path)
+                    if (sm != null) {
+                        // server streaming: N frames + one trailer
+                        let sreply: GrpcStreamReply = this.DispatchStream(path, body)
+                        let sbody: List<int> = GrpcServer.StreamResponseBody(sreply)
+                        H2Conn.RespondGrpc(conn, sbody, sreply.Status, sreply.Message)
+                    } else {
+                        let reply: GrpcReply = this.Dispatch(path, body)
+                        let frame: List<int> = GrpcServer.ResponseFrame(reply)
+                        H2Conn.RespondGrpc(conn, frame, reply.Status, reply.Message)
+                    }
                     sid = H2Conn.NextRequest(conn)
                 }
                 H2Conn.Close(conn)
@@ -310,5 +398,39 @@ public class GrpcClient {
         if (fr.HasNext()) { msg = fr.Next() }
         if (gs > 0) { return new GrpcReply(gs, gm, msg) }
         return new GrpcReply(0, "", msg)
+    }
+
+    // Server-streaming call: one request, then collect EVERY response
+    // message (the server sends N length-prefixed frames before the
+    // grpc-status trailer). Status comes from the trailer.
+    public GrpcStreamReply CallStream(string path, List<int> message) {
+        let conn = H2Client.ConnectH2c(this.Host, this.Port)
+        if (!H2Client.IsConnected(conn)) {
+            return GrpcStreamReply.Error(GrpcStatus.Unavailable(), "connect failed")
+        }
+        let frame: List<int> = GrpcFrame.Encode(message)
+        let httpStatus: int = H2Client.Unary(conn, path, frame, "application/grpc")
+        if (httpStatus < 0) {
+            H2Client.Close(conn)
+            return GrpcStreamReply.Error(GrpcStatus.Unavailable(), "transport error")
+        }
+        let blen: int = H2Client.BodyLen(conn)
+        var respFrame: List<int> = new List<int>()
+        var i: int = 0
+        while (i < blen) {
+            let b: int = H2Client.BodyByteAt(conn, i)
+            if (b >= 0) { respFrame.Add(b) }
+            i = i + 1
+        }
+        let gs: int = H2Client.GrpcStatus(conn)
+        let gm: string = H2Client.GrpcMessage(conn)
+        H2Client.Close(conn)
+        // unframe ALL response messages
+        var msgs: List<List<int>> = new List<List<int>>()
+        let fr = GrpcFrameReader.New(respFrame)
+        while (fr.HasNext()) { msgs.Add(fr.Next()) }
+        var st: int = 0
+        if (gs > 0) { st = gs }
+        return new GrpcStreamReply(msgs, st, gm)
     }
 }

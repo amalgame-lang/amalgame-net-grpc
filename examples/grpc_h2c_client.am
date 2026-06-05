@@ -38,9 +38,24 @@ public class Program {
         let echoOk: bool = reply.Body.Count() == 3
             && reply.Body.Get(0) == 72 && reply.Body.Get(1) == 0 && reply.Body.Get(2) == 105
         if (reply.Status == 0 && echoOk) {
-            Console.WriteLine("[PASS] gRPC client e2e: echo round-trip (incl. NUL) + status OK")
+            Console.WriteLine("[PASS] gRPC client e2e: unary echo (incl. NUL) + status OK")
         } else {
-            Console.WriteLine("[FAIL] gRPC client e2e (status " + String_FromInt(reply.Status) + " len " + String_FromInt(reply.Body.Count()) + ")")
+            Console.WriteLine("[FAIL] gRPC client unary (status " + String_FromInt(reply.Status) + " len " + String_FromInt(reply.Body.Count()) + ")")
+        }
+
+        // server-streaming: expect 3 echoed messages
+        let sreply = cli.CallStream("/echo.Echo/Stream", msg)
+        var streamOk: bool = sreply.Messages.Count() == 3 && sreply.Status == 0
+        var k: int = 0
+        while (k < sreply.Messages.Count()) {
+            let m: List<int> = sreply.Messages.Get(k)
+            if (m.Count() != 3 || m.Get(1) != 0) { streamOk = false }
+            k = k + 1
+        }
+        if (streamOk) {
+            Console.WriteLine("[PASS] gRPC client e2e: server-streaming (3 messages, binary-safe)")
+        } else {
+            Console.WriteLine("[FAIL] gRPC client streaming (n=" + String_FromInt(sreply.Messages.Count()) + " status " + String_FromInt(sreply.Status) + ")")
         }
     }
 }
