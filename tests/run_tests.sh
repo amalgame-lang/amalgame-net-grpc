@@ -53,7 +53,7 @@ link_pkg() {  # $1=dir $2=git-path $3=tag $4=sha
     local d="$FAKE_CACHE/$2/${3}_${4:0:8}"
     mkdir -p "$(dirname "$d")"; rm -rf "$d"; ln -s "$1" "$d"
 }
-link_pkg "$NETHTTP_DIR" "github.com/amalgame-lang/amalgame-net-http" "v0.22.0" "abcdef0123456789000000000000000000000ef"
+link_pkg "$NETHTTP_DIR" "github.com/amalgame-lang/amalgame-net-http" "v0.23.0" "abcdef0123456789000000000000000000000ef"
 link_pkg "$ASYNC_DIR"   "github.com/amalgame-lang/amalgame-async"    "v0.2.0"  "fedcba9876543210000000000000000000000ff"
 export AMALGAME_PACKAGES_DIR="$FAKE_CACHE"
 
@@ -61,7 +61,7 @@ cat > "$PKG_DIR/amalgame.lock" <<EOF
 [[package]]
 name = "amalgame-net-http"
 git  = "github.com/amalgame-lang/amalgame-net-http"
-tag  = "v0.22.0"
+tag  = "v0.23.0"
 rev  = "abcdef0123456789000000000000000000000ef"
 
 [[package]]
@@ -116,6 +116,22 @@ else
     OUT2="$("$BUILD_DIR/svc")"; echo "$OUT2"
     echo "$OUT2" | grep -q "\[FAIL\]" && FAILED=1
 fi
+
+# ── end-to-end: AM gRPC client ↔ AM gRPC server over TCP (h2c) ─────
+echo -e "\n── e2e: GrpcClient ↔ ServeH2c (h2c) ──"
+"$AMC" -o "$BUILD_DIR/e2e_srv" examples/grpc_h2c_server.am --external facade.am >/dev/null 2>&1
+gcc -O2 $INCS "$BUILD_DIR/e2e_srv.c" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" $LIBS -o "$BUILD_DIR/e2e_srv" 2>"$BUILD_DIR/e" \
+    || { echo -e "${RED}e2e server build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+"$AMC" -o "$BUILD_DIR/e2e_cli" examples/grpc_h2c_client.am --external facade.am >/dev/null 2>&1
+gcc -O2 $INCS "$BUILD_DIR/e2e_cli.c" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" $LIBS -o "$BUILD_DIR/e2e_cli" 2>"$BUILD_DIR/e" \
+    || { echo -e "${RED}e2e client build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+E2E_PORT=50096
+NS_GRPC_PORT=$E2E_PORT "$BUILD_DIR/e2e_srv" >/dev/null 2>&1 & E2E_SRV=$!
+sleep 0.6
+E2E_OUT="$(NS_GRPC_PORT=$E2E_PORT timeout 15 "$BUILD_DIR/e2e_cli")"; echo "$E2E_OUT"
+kill "$E2E_SRV" 2>/dev/null
+echo "$E2E_OUT" | grep -q "\[FAIL\]" && FAILED=1
+echo "$E2E_OUT" | grep -q "\[PASS\]" || FAILED=1
 
 echo ""
 if [ "$FAILED" -eq 0 ]; then echo -e "${GREEN}All tests passed${NC}"; else echo -e "${RED}FAILED${NC}"; exit 1; fi

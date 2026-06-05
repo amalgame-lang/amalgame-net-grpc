@@ -1,8 +1,8 @@
 [package]
 name              = "amalgame-net-grpc"
-version           = "0.2.1"
+version           = "0.3.0"
 license           = "Apache-2.0"
-description       = "gRPC server core for the Mosaic stack — transport-agnostic message framing (length-prefixed), status codes, method-path routing and unary request dispatch, binary-safe on List<int>. Composes amalgame-formats-protobuf (message codec). v0.2.0: GrpcServer.ServeH2c(port) serves real gRPC over HTTP/2 cleartext end-to-end — accept, read :path + binary-safe framed body, dispatch, and answer via net-http v0.22.0 RespondGrpc (grpc-status/grpc-message TRAILERS). Proven end-to-end: a compiled Amalgame server answers a real nghttp2 client over TCP (status 200 + application/grpc + grpc-status 0 + framed echo byte-exact). v0.1.0: transport-agnostic core (framing, status, path, dispatch). v0.2.1: typed service stubs from .proto service{} blocks (via formats-protobuf proto-gen.js) — <Name>Service.RegisterOn(server). Remaining: client stubs + streaming."
+description       = "gRPC server core for the Mosaic stack — transport-agnostic message framing (length-prefixed), status codes, method-path routing and unary request dispatch, binary-safe on List<int>. Composes amalgame-formats-protobuf (message codec). v0.2.0: GrpcServer.ServeH2c(port) serves real gRPC over HTTP/2 cleartext end-to-end — accept, read :path + binary-safe framed body, dispatch, and answer via net-http v0.22.0 RespondGrpc (grpc-status/grpc-message TRAILERS). Proven end-to-end: a compiled Amalgame server answers a real nghttp2 client over TCP (status 200 + application/grpc + grpc-status 0 + framed echo byte-exact). v0.1.0: transport-agnostic core (framing, status, path, dispatch). v0.3.0: a unary gRPC CLIENT — GrpcClient.Dial(host,port).Call(path, message) over net-http v0.23.0's H2Client; proven end-to-end (an Amalgame client ↔ an Amalgame ServeH2c server over TCP, echo incl. NUL + grpc-status). v0.2.1: typed service stubs from .proto service{} blocks. Remaining: streaming + grpcurl interop."
 required-amalgame = ">=0.8.58"
 schema-version    = 1
 
@@ -15,4 +15,4 @@ libs      = []
 
 [dependencies]
 amalgame-formats-protobuf = ">=0.1.0"
-amalgame-net-http        = ">=0.22.0"
+amalgame-net-http        = ">=0.23.0"

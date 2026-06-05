@@ -13,7 +13,7 @@ jobs:
       # GrpcServer.ServeH2c imports Amalgame.Net.Http; the runner stages a
       # fake package cache from these siblings.
       - uses: actions/checkout@v4
-        with: { repository: amalgame-lang/amalgame-net-http, ref: v0.22.0, path: amalgame-net-http }
+        with: { repository: amalgame-lang/amalgame-net-http, ref: v0.23.0, path: amalgame-net-http }
       - uses: actions/checkout@v4
         with: { repository: amalgame-lang/amalgame-tls, ref: v0.3.3, path: amalgame-tls }
       - uses: actions/checkout@v4

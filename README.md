@@ -66,6 +66,21 @@ server.ServeH2c(50051)
 decodes the request message, calls the typed `Closure<Req,Resp>`, and
 encodes the reply. Unset handlers return `UNIMPLEMENTED`.
 
+## gRPC client (v0.3.0)
+
+```amalgame
+let cli = GrpcClient.Dial("127.0.0.1", 50051)
+let reply = cli.Call("/echo.Echo/Ping", requestMessageBytes)
+// reply.Status (from the grpc-status trailer); reply.Body = reply message bytes
+// decode reply.Body with ProtoReader / a generated <Msg>.Decode
+```
+
+`GrpcClient.Call` frames the request, sends it over net-http v0.23.0's
+HTTP/2 client (`H2Client`), and returns a `GrpcReply` whose status comes
+from the grpc-status trailer. **Proven end-to-end:** an Amalgame client
+talks to an Amalgame `ServeH2c` server over TCP — echo round-trip incl. a
+NUL byte + `grpc-status 0` (`examples/grpc_h2c_client.am`).
+
 ## Scope — honest
 
 **Remaining:** `.proto` IDL codegen + client stubs + streaming (the

@@ -213,6 +213,7 @@ public class GrpcServer {
         return GrpcFrame.Encode(reply.Body)
     }
 
+
     // Serve gRPC over HTTP/2 cleartext (h2c) — the real end-to-end path.
     // Binds `port`, and for each request reads the :path + the framed
     // request body (binary-safe via H2Conn.BodyByteAt), dispatches to the
@@ -251,5 +252,63 @@ public class GrpcServer {
         }
         H2Server.Close(srv)
         return 0
+    }
+}
+
+// A unary gRPC client over HTTP/2 cleartext (h2c). Dials a server, then
+// Call(path, message) frames the request, sends it, and returns a
+// GrpcReply whose Status comes from the grpc-status trailer and whose
+// Body is the unframed reply message bytes.
+//
+//   let cli = GrpcClient.Dial("127.0.0.1", 50051)
+//   let reply = cli.Call("/echo.Echo/Ping", requestMsgBytes)
+//   // reply.Status == 0 (OK) → decode reply.Body with ProtoReader
+//
+// Holds the target host/port and opens a fresh h2c connection per Call
+// (simple + robust for unary; connection pooling is a later concern).
+// The H2Client handle is a local — never an annotated field — because
+// amc lowers an explicit `H2Client` type to a name that doesn't match
+// the C-runtime struct; inference off H2Client.ConnectH2c is correct.
+public class GrpcClient {
+    public Host: string
+    public Port: int
+
+    public GrpcClient(string host, int port) { this.Host = host; this.Port = port }
+    public static GrpcClient Dial(string host, int port) {
+        return new GrpcClient(host, port)
+    }
+
+    // Unary call. On a transport failure returns UNAVAILABLE; otherwise
+    // the grpc-status trailer drives the GrpcReply status, and Body is
+    // the unframed reply message bytes.
+    public GrpcReply Call(string path, List<int> message) {
+        let conn = H2Client.ConnectH2c(this.Host, this.Port)
+        if (!H2Client.IsConnected(conn)) {
+            return GrpcReply.Error(GrpcStatus.Unavailable(), "connect failed")
+        }
+        let frame: List<int> = GrpcFrame.Encode(message)
+        let httpStatus: int = H2Client.Unary(conn, path, frame, "application/grpc")
+        if (httpStatus < 0) {
+            H2Client.Close(conn)
+            return GrpcReply.Error(GrpcStatus.Unavailable(), "transport error")
+        }
+        // read the (binary-safe) response body into a frame buffer
+        let blen: int = H2Client.BodyLen(conn)
+        var respFrame: List<int> = new List<int>()
+        var i: int = 0
+        while (i < blen) {
+            let b: int = H2Client.BodyByteAt(conn, i)
+            if (b >= 0) { respFrame.Add(b) }
+            i = i + 1
+        }
+        let gs: int = H2Client.GrpcStatus(conn)
+        let gm: string = H2Client.GrpcMessage(conn)
+        H2Client.Close(conn)
+        // unframe the reply message
+        var msg: List<int> = new List<int>()
+        let fr = GrpcFrameReader.New(respFrame)
+        if (fr.HasNext()) { msg = fr.Next() }
+        if (gs > 0) { return new GrpcReply(gs, gm, msg) }
+        return new GrpcReply(0, "", msg)
     }
 }

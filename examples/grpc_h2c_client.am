@@ -1,0 +1,46 @@
+// examples/grpc_h2c_client.am — a minimal gRPC client over h2c.
+//
+//   NS_GRPC_PORT=50051 grpc_h2c_client
+//
+// Dials the echo server (examples/grpc_h2c_server.am), calls
+// /echo.Echo/Ping with a small binary message (containing a NUL), and
+// checks the echoed reply + the grpc-status. A 100%-Amalgame end-to-end
+// pair: this client + that server, no external gRPC tooling.
+
+namespace Example
+
+import Amalgame.Collections
+import Amalgame.String
+import Amalgame.Net.Grpc
+
+public class Program {
+    static int EnvInt(string name, int dflt) {
+        var n: int = 0
+        @c {
+            const char* v = getenv((const char*) name);
+            n = (v && v[0]) ? atoi(v) : (long long) dflt;
+        }
+        return n
+    }
+
+    public static void Main(string[] args) {
+        let port: int = Program.EnvInt("NS_GRPC_PORT", 50051)
+        let cli = GrpcClient.Dial("127.0.0.1", port)
+
+        // request message: "H\0i" (3 bytes, NUL inside)
+        var msg: List<int> = new List<int>()
+        msg.Add(72)
+        msg.Add(0)
+        msg.Add(105)
+
+        let reply = cli.Call("/echo.Echo/Ping", msg)
+
+        let echoOk: bool = reply.Body.Count() == 3
+            && reply.Body.Get(0) == 72 && reply.Body.Get(1) == 0 && reply.Body.Get(2) == 105
+        if (reply.Status == 0 && echoOk) {
+            Console.WriteLine("[PASS] gRPC client e2e: echo round-trip (incl. NUL) + status OK")
+        } else {
+            Console.WriteLine("[FAIL] gRPC client e2e (status " + String_FromInt(reply.Status) + " len " + String_FromInt(reply.Body.Count()) + ")")
+        }
+    }
+}
