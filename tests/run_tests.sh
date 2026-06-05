@@ -92,5 +92,30 @@ gcc -O2 $INCS "$BUILD_DIR/t.c" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" $LIBS -o 
 OUT="$("$BUILD_DIR/t")"; echo "$OUT"
 echo "$OUT" | grep -q "\[FAIL\]" && FAILED=1
 
+# ── service-stub codegen test (needs the sibling formats-protobuf) ──
+PB_DIR="$(resolve AMALGAME_FORMATS_PROTOBUF amalgame-formats-protobuf facade.am)"
+echo -e "\n── service-stub codegen ──"
+if [ -z "$PB_DIR" ]; then
+    echo "amalgame-formats-protobuf not found — skipping service-stub test"
+else
+    PINC="$INCS -I$PB_DIR/runtime"
+    # regenerate the fixture if node + the generator are present
+    if command -v node >/dev/null 2>&1 && [ -f "$PB_DIR/tools/proto-gen.js" ]; then
+        node "$PB_DIR/tools/proto-gen.js" tests/greeter.proto tests/greeter_pb.am \
+            || { echo -e "${RED}proto-gen (service) failed${NC}"; FAILED=1; }
+    fi
+    "$AMC" --lib -o "$BUILD_DIR/pb" "$PB_DIR/facade.am" >/dev/null 2>&1
+    gcc -O2 $PINC -c "$BUILD_DIR/pb.c" -o "$BUILD_DIR/pb.o" 2>"$BUILD_DIR/e" \
+        || { echo -e "${RED}formats-protobuf build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+    "$AMC" --lib -o "$BUILD_DIR/greeter" tests/greeter_pb.am --external facade.am --external "$PB_DIR/facade.am" >/dev/null 2>&1
+    gcc -O2 $PINC -c "$BUILD_DIR/greeter.c" -o "$BUILD_DIR/greeter.o" 2>"$BUILD_DIR/e" \
+        || { echo -e "${RED}generated build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+    "$AMC" -o "$BUILD_DIR/svc" tests/service_test.am --external facade.am --external "$PB_DIR/facade.am" --external tests/greeter_pb.am >/dev/null 2>&1
+    gcc -O2 $PINC "$BUILD_DIR/svc.c" "$BUILD_DIR/greeter.o" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" "$BUILD_DIR/pb.o" $LIBS -o "$BUILD_DIR/svc" 2>"$BUILD_DIR/e" \
+        || { echo -e "${RED}service test build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+    OUT2="$("$BUILD_DIR/svc")"; echo "$OUT2"
+    echo "$OUT2" | grep -q "\[FAIL\]" && FAILED=1
+fi
+
 echo ""
 if [ "$FAILED" -eq 0 ]; then echo -e "${GREEN}All tests passed${NC}"; else echo -e "${RED}FAILED${NC}"; exit 1; fi

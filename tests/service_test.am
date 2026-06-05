@@ -1,0 +1,73 @@
+// Service-stub codegen test: wire a typed handler onto the generated
+// GreeterService, register it on a GrpcServer, and dispatch a framed
+// request through the transport-agnostic GrpcServer.Dispatch — decode
+// → typed handler → encode all happen inside the generated adapter.
+// Network-free (the wire path is covered by the e2e nghttp2 smoke).
+//
+// Same namespace as the generated greeter_pb.am (Demo.V1) so the
+// generated types resolve directly.
+
+namespace Demo.V1
+
+import Amalgame.Collections
+import Amalgame.String
+import Amalgame.Net.Grpc
+
+public class Program {
+    static HelloReply greet(HelloRequest rq) {
+        let out: HelloReply = HelloReply.New()
+        out.message = "Hello, " + rq.name
+        return out
+    }
+
+    public static void Main(string[] args) {
+        Console.WriteLine("amalgame-net-grpc — service-stub codegen")
+        var pass: int = 0
+        var fail: int = 0
+
+        let svc: GreeterService = GreeterService.New()
+            .OnSayHello((rq: HelloRequest) => Program.greet(rq))
+        let srv: GrpcServer = GrpcServer.New()
+        svc.RegisterOn(srv)
+
+        // build a framed HelloRequest{name="Ada"}
+        let reqMsg: HelloRequest = HelloRequest.New()
+        reqMsg.name = "Ada"
+        let frame: List<int> = GrpcFrame.Encode(reqMsg.Encode())
+
+        // ── 1. typed dispatch round-trip ─────────────────────────
+        let reply: GrpcReply = srv.Dispatch("/demo.v1.Greeter/SayHello", frame)
+        let out: HelloReply = HelloReply.Decode(reply.Body)
+        if (reply.Status == 0 && out.message == "Hello, Ada") {
+            Console.WriteLine("[PASS] typed handler: decode→handle→encode via RegisterOn")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] typed dispatch (status " + String_FromInt(reply.Status) + " msg '" + out.message + "')")
+            fail = fail + 1
+        }
+
+        // ── 2. unknown method → UNIMPLEMENTED ────────────────────
+        let r2: GrpcReply = srv.Dispatch("/demo.v1.Greeter/Missing", frame)
+        if (r2.Status == GrpcStatus.Unimplemented()) {
+            Console.WriteLine("[PASS] unknown method → UNIMPLEMENTED")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] unknown method status " + String_FromInt(r2.Status))
+            fail = fail + 1
+        }
+
+        // ── 3. not-implemented method (registered service, nil handler)
+        let bare: GreeterService = GreeterService.New()
+        let r3: GrpcReply = bare.dispatchSayHello(GrpcRequest.New(reqMsg.Encode()))
+        if (r3.Status == GrpcStatus.Unimplemented()) {
+            Console.WriteLine("[PASS] nil typed handler → UNIMPLEMENTED")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] nil handler status " + String_FromInt(r3.Status))
+            fail = fail + 1
+        }
+
+        Console.WriteLine("")
+        Console.WriteLine("Summary: " + String_FromInt(pass) + " passed, " + String_FromInt(fail) + " failed")
+    }
+}

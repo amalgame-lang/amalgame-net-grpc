@@ -47,6 +47,25 @@ byte-exact. See `examples/grpc_h2c_server.am`.
 h2c suits internal service-to-service traffic; front it with TLS for
 public endpoints. Unary only in v0.x.
 
+## Typed services from a `.proto` (codegen)
+
+`amalgame-formats-protobuf`'s `proto-gen.js` turns a `service {}` block
+into a typed `<Name>Service`:
+
+```amalgame
+let svc = GreeterService.New()
+    .OnSayHello((rq: HelloRequest) => {
+        let out = HelloReply.New(); out.message = "Hello, " + rq.name; return out
+    })
+let server = GrpcServer.New()
+svc.RegisterOn(server)        // decode → typed handler → encode, per rpc
+server.ServeH2c(50051)
+```
+
+`RegisterOn` wires each rpc's path; the generated per-method adapter
+decodes the request message, calls the typed `Closure<Req,Resp>`, and
+encodes the reply. Unset handlers return `UNIMPLEMENTED`.
+
 ## Scope — honest
 
 **Remaining:** `.proto` IDL codegen + client stubs + streaming (the
