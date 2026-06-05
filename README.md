@@ -91,6 +91,26 @@ GrpcServer.New() /* ...RegisterOn... */ .ServeHttps(443, "cert.pem", "key.pem")
 Same dispatch as `ServeH2c`; the H2 connection's I/O is TLS-wrapped.
 The CLIENT speaks TLS too: GrpcClient.DialTls(host, port, insecure) (or a generated <Name>Client.DialTls). Validated by grpcurl over TLS AND a typed Amalgame client ↔ server over TLS (unary + streaming).
 
+## All four method types (v0.7.0)
+
+Unary, server-streaming, **client-streaming**, and **bidi** all work:
+
+```amalgame
+// client-streaming (N requests → 1 reply)
+srv.RegisterClientStream("/s.S/Up", (reqs: GrpcRequests) => GrpcReply.Ok(summarize(reqs.Messages)))
+let r = cli.CallClientStream("/s.S/Up", listOfRequestBytes)
+
+// bidi (N requests → N replies)
+srv.RegisterBidi("/s.S/Chat", (reqs: GrpcRequests) => GrpcStreamReply.Ok(replies))
+let s = cli.CallBidi("/s.S/Chat", listOfRequestBytes)
+```
+
+Streaming uses the **collect model** (the client sends all its messages
+framed in one body + END_STREAM; the server reads them all and replies)
+— a valid gRPC exchange on the wire. True *incremental* flush (messages
+delivered as produced) is a later net-http concern. Codegen covers unary
++ server-streaming; client-streaming/bidi use the runtime API directly.
+
 ## Server streaming (v0.4.0)
 
 ```amalgame

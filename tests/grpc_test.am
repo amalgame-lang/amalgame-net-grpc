@@ -16,6 +16,16 @@ public class Program {
         l.Add(c)
         return l
     }
+    // client-streaming handler: reply = one byte = number of requests
+    static GrpcReply countReqs(GrpcRequests reqs) {
+        var b: List<int> = new List<int>()
+        b.Add(reqs.Messages.Count())
+        return GrpcReply.Ok(b)
+    }
+    // bidi handler: echo every request message back as a reply
+    static GrpcStreamReply bidiEcho(GrpcRequests reqs) {
+        return GrpcStreamReply.Ok(reqs.Messages)
+    }
     static GrpcStreamReply threeFrames(GrpcRequest req) {
         var msgs: List<List<int>> = new List<List<int>>()
         msgs.Add(req.Body)
@@ -164,6 +174,39 @@ public class Program {
             pass = pass + 1
         } else {
             Console.WriteLine("[FAIL] streaming (n=" + String_FromInt(gotN) + ")")
+            fail = fail + 1
+        }
+
+        // ── 9. client streaming: N requests → 1 reply (count) ────
+        let csrv = GrpcServer.New().RegisterClientStream("/x.S/CS",
+            (reqs: GrpcRequests) => Program.countReqs(reqs))
+        var reqMsgs: List<List<int>> = new List<List<int>>()
+        reqMsgs.Add(Program.bytes(1, 0, 1))
+        reqMsgs.Add(Program.bytes(2, 0, 2))
+        reqMsgs.Add(Program.bytes(3, 0, 3))
+        let creply: GrpcReply = csrv.DispatchClientStream("/x.S/CS", GrpcFrame.EncodeAll(reqMsgs))
+        if (creply.Status == 0 && creply.Body.Count() == 1 && creply.Body.Get(0) == 3) {
+            Console.WriteLine("[PASS] client streaming: 3 requests → reply count 3")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] client streaming")
+            fail = fail + 1
+        }
+
+        // ── 10. bidi: N requests → N replies (echo) ──────────────
+        let bsrv = GrpcServer.New().RegisterBidi("/x.S/BD",
+            (reqs: GrpcRequests) => Program.bidiEcho(reqs))
+        let breply: GrpcStreamReply = bsrv.DispatchBidi("/x.S/BD", GrpcFrame.EncodeAll(reqMsgs))
+        var bidiOk: bool = breply.Messages.Count() == 3
+        if (bidiOk) {
+            let mm: List<int> = breply.Messages.Get(1)
+            if (!Program.listEq(mm, Program.bytes(2, 0, 2))) { bidiOk = false }
+        }
+        if (bidiOk && breply.Status == 0) {
+            Console.WriteLine("[PASS] bidi: 3 requests → 3 echoed replies (binary-safe)")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] bidi (n=" + String_FromInt(breply.Messages.Count()) + ")")
             fail = fail + 1
         }
 
