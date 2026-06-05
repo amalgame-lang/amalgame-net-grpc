@@ -1,0 +1,17 @@
+[package]
+name              = "amalgame-net-grpc"
+version           = "0.1.0"
+license           = "Apache-2.0"
+description       = "gRPC server core for the Mosaic stack — transport-agnostic message framing (length-prefixed), status codes, method-path routing and unary request dispatch, binary-safe on List<int>. Composes amalgame-formats-protobuf (message codec). v0.1.0: core only — the HTTP/2 serving (grpc-status trailers + binary request body) needs an amalgame-net-http nghttp2 extension and is the next milestone; .proto codegen + streaming also to come."
+required-amalgame = ">=0.8.58"
+schema-version    = 1
+
+[stdlib]
+classes   = ["GrpcStatus", "GrpcFrame", "GrpcFrameReader", "GrpcPath", "GrpcReply", "GrpcMethod", "GrpcServer"]
+header    = "runtime/Amalgame_Net_Grpc.h"
+namespace = "Amalgame.Net.Grpc"
+facade    = "facade.am"
+libs      = []
+
+[dependencies]
+amalgame-formats-protobuf = ">=0.1.0"

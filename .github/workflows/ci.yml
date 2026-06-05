@@ -1,0 +1,23 @@
+name: CI
+on:
+  push: { branches: [main], tags: ['v*'] }
+  pull_request: { branches: [main] }
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy: { matrix: { amc-tag: [v0.8.74] } }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system deps
+        run: sudo apt-get update -qq && sudo apt-get install -y libgc-dev
+      - name: Download amc ${{ matrix.amc-tag }}
+        run: |
+          set -e
+          TAG="${{ matrix.amc-tag }}"; VERSION="${TAG#v}"
+          curl -sSL -o amc.tar.gz "https://github.com/amalgame-lang/Amalgame/releases/download/${TAG}/amc-${VERSION}-linux-x86_64.tar.gz"
+          mkdir -p $RUNNER_TEMP/amc && tar -xzf amc.tar.gz -C $RUNNER_TEMP/amc --strip-components=1
+          echo "AMC=$RUNNER_TEMP/amc/bin/amc" >> $GITHUB_ENV
+          echo "AMC_RUNTIME=$RUNNER_TEMP/amc/share/amalgame/runtime" >> $GITHUB_ENV
+      - name: Run tests
+        run: ./tests/run_tests.sh "$AMC"

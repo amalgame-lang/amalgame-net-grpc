@@ -1,0 +1,214 @@
+// amalgame-net-grpc — gRPC server core (v0.1.0).
+//
+// The transport-agnostic gRPC layer that sits between the protobuf
+// codec (amalgame-formats-protobuf) and the HTTP/2 transport
+// (amalgame-net-http): message framing, status codes, method-path
+// routing, and request dispatch. Everything here is pure, binary-safe
+// (List<int>), and unit-testable WITHOUT a live HTTP/2 connection.
+//
+//   import Amalgame.Net.Grpc
+//
+//   let srv = GrpcServer.New()
+//       .Register("/greeter.Greeter/SayHello",
+//           (req: GrpcRequest) => GrpcReply.Ok(
+//               // decode req.Body with ProtoReader, build a reply message
+//               ProtoWriter.New().Str(1, "Hello").ToBytes()))
+//
+//   // a frontend (HTTP/2) hands the path + the framed request body in,
+//   // and ships GrpcServer.ResponseFrame(reply) back as DATA plus the
+//   // grpc-status trailer:
+//   let reply = srv.Dispatch(path, requestFrame)
+//
+// gRPC wire framing (one message): a 1-byte compression flag (0 = not
+// compressed) followed by a 4-byte big-endian length, then that many
+// payload bytes. A stream may carry several such frames back-to-back.
+//
+// NOT in v0.1.0 (honest scope): the HTTP/2 serving itself — gRPC needs
+// the `grpc-status`/`grpc-message` HTTP/2 *trailers* and a binary-safe
+// request body, neither of which amalgame-net-http's nghttp2 binding
+// exposes yet (H2Conn_Respond sends fixed headers + no trailers;
+// H2Conn_Body is a NUL-truncating string). Wiring that is the next
+// milestone. Also not yet: `.proto` codegen, client stubs, streaming
+// (this core handles unary; streaming reuses GrpcFrame per message),
+// compression (flag must be 0).
+
+namespace Amalgame.Net.Grpc
+
+import Amalgame.Collections
+import Amalgame.String
+
+// Canonical gRPC status codes (https://grpc.io/docs/guides/status-codes).
+public class GrpcStatus {
+    public static int Ok()                 { return 0 }
+    public static int Cancelled()          { return 1 }
+    public static int Unknown()            { return 2 }
+    public static int InvalidArgument()    { return 3 }
+    public static int DeadlineExceeded()   { return 4 }
+    public static int NotFound()           { return 5 }
+    public static int AlreadyExists()      { return 6 }
+    public static int PermissionDenied()   { return 7 }
+    public static int ResourceExhausted()  { return 8 }
+    public static int FailedPrecondition() { return 9 }
+    public static int Aborted()            { return 10 }
+    public static int OutOfRange()         { return 11 }
+    public static int Unimplemented()      { return 12 }
+    public static int Internal()           { return 13 }
+    public static int Unavailable()        { return 14 }
+    public static int DataLoss()           { return 15 }
+    public static int Unauthenticated()    { return 16 }
+}
+
+// One message-on-the-wire framing: flag(1) + length(4, big-endian) +
+// payload. Operates on List<int> byte buffers — binary-safe.
+public class GrpcFrame {
+    // Wrap a single message body in a gRPC length-prefixed frame.
+    public static List<int> Encode(List<int> message) {
+        var out: List<int> = new List<int>()
+        let n: int = message.Count()
+        out.Add(0)                              // compression flag: none
+        out.Add(((n >> 24)) & 255)
+        out.Add(((n >> 16)) & 255)
+        out.Add(((n >> 8)) & 255)
+        out.Add((n & 255))
+        var i: int = 0
+        while (i < n) {
+            out.Add(message.Get(i))
+            i = i + 1
+        }
+        return out
+    }
+}
+
+// Pull successive messages out of a buffer of concatenated gRPC frames.
+public class GrpcFrameReader {
+    public Buf: List<int>
+    public Pos: int
+
+    public GrpcFrameReader(List<int> buf) { this.Buf = buf; this.Pos = 0 }
+    public static GrpcFrameReader New(List<int> buf) { return new GrpcFrameReader(buf) }
+
+    // Is there at least one more complete frame available?
+    public bool HasNext() { return (this.Pos + 5) <= this.Buf.Count() }
+
+    // Decode the next message body. Returns its payload bytes (the flag
+    // + length prefix are consumed). A compressed frame (flag != 0) is
+    // unsupported in v0.1.0 — its bytes are still consumed and an empty
+    // list returned, so the caller can map it to a clean
+    // UNIMPLEMENTED/INTERNAL rather than desync the stream.
+    public List<int> Next() {
+        let flag: int = this.Buf.Get(this.Pos)
+        let b3: int = this.Buf.Get(this.Pos + 1)
+        let b2: int = this.Buf.Get(this.Pos + 2)
+        let b1: int = this.Buf.Get(this.Pos + 3)
+        let b0: int = this.Buf.Get(this.Pos + 4)
+        let len: int = (((b3 << 24)) | ((b2 << 16)) | ((b1 << 8)) | b0)
+        this.Pos = this.Pos + 5
+        var out: List<int> = new List<int>()
+        var i: int = 0
+        while (i < len) {
+            out.Add(this.Buf.Get(this.Pos))
+            this.Pos = this.Pos + 1
+            i = i + 1
+        }
+        if (flag != 0) { return new List<int>() }   // compression unsupported
+        return out
+    }
+}
+
+// Method-path helpers: gRPC paths are "/<package>.<Service>/<Method>".
+public class GrpcPath {
+    public static string Make(string service, string method) {
+        return "/" + service + "/" + method
+    }
+}
+
+// A handler's result: a status, an optional human message (grpc-message),
+// and the response message body (empty on error).
+public class GrpcReply {
+    public Status:  int
+    public Message: string
+    public Body:    List<int>
+
+    public GrpcReply(int status, string message, List<int> body) {
+        this.Status  = status
+        this.Message = message
+        this.Body    = body
+    }
+    public static GrpcReply Ok(List<int> body) {
+        return new GrpcReply(0, "", body)
+    }
+    public static GrpcReply Error(int status, string message) {
+        return new GrpcReply(status, message, new List<int>())
+    }
+    public bool IsOk() { return this.Status == 0 }
+}
+
+// What a unary handler receives: the decoded request message bytes
+// (a wrapper class rather than a bare List<int> so handler closures
+// type cleanly, and so request metadata/headers can be added later
+// without changing the signature).
+public class GrpcRequest {
+    public Body: List<int>
+    public GrpcRequest(List<int> body) { this.Body = body }
+    public static GrpcRequest New(List<int> body) { return new GrpcRequest(body) }
+}
+
+// One registered unary method.
+public class GrpcMethod {
+    public Path:    string
+    public Handler: Closure<GrpcRequest, GrpcReply>
+    public GrpcMethod(string path, Closure<GrpcRequest, GrpcReply> handler) {
+        this.Path = path
+        this.Handler = handler
+    }
+}
+
+// The server: a registry of unary methods + transport-agnostic dispatch.
+public class GrpcServer {
+    public Methods: List<GrpcMethod>
+
+    public GrpcServer() { this.Methods = new List<GrpcMethod>() }
+    public static GrpcServer New() { return new GrpcServer() }
+
+    // Register a unary handler: (GrpcRequest) -> GrpcReply.
+    public GrpcServer Register(string path, Closure<GrpcRequest, GrpcReply> handler) {
+        this.Methods.Add(new GrpcMethod(path, handler))
+        return this
+    }
+
+    // Find the registered method for `path`, or null. (Returns the
+    // GrpcMethod rather than the bare closure: amc collapses a
+    // method-returned Closure type to the closure's own return type, so
+    // the handler is invoked directly off the method object instead.)
+    public GrpcMethod lookup(string path) {
+        var i: int = 0
+        let n: int = this.Methods.Count()
+        while (i < n) {
+            let m: GrpcMethod = this.Methods.Get(i)
+            if (m.Path == path) { return m }
+            i = i + 1
+        }
+        return null
+    }
+
+    // Dispatch a request: unframe the first message from `requestFrame`,
+    // route by `path`, run the handler. Unknown path -> UNIMPLEMENTED.
+    // Empty/!framed body -> the handler still runs with empty bytes
+    // (a valid empty protobuf message).
+    public GrpcReply Dispatch(string path, List<int> requestFrame) {
+        let m: GrpcMethod = this.lookup(path)
+        if (m == null) {
+            return GrpcReply.Error(GrpcStatus.Unimplemented(), "method not found: " + path)
+        }
+        var msg: List<int> = new List<int>()
+        let fr = GrpcFrameReader.New(requestFrame)
+        if (fr.HasNext()) { msg = fr.Next() }
+        return m.Handler(GrpcRequest.New(msg))
+    }
+
+    // Frame a reply's body for the wire (the DATA the frontend sends
+    // before the grpc-status trailer).
+    public static List<int> ResponseFrame(GrpcReply reply) {
+        return GrpcFrame.Encode(reply.Body)
+    }
+}
