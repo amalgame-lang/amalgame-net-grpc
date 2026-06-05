@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { repository: amalgame-lang/amalgame-async, ref: v0.2.2, path: amalgame-async }
       - uses: actions/checkout@v4
-        with: { repository: amalgame-lang/amalgame-formats-protobuf, ref: v0.2.2, path: amalgame-formats-protobuf }
+        with: { repository: amalgame-lang/amalgame-formats-protobuf, ref: v0.2.3, path: amalgame-formats-protobuf }
       - name: Install system deps
         run: sudo apt-get update -qq && sudo apt-get install -y libgc-dev libssl-dev libnghttp2-dev
       - name: Install grpcurl (reference gRPC client for the interop test)

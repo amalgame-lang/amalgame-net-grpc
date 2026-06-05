@@ -9,6 +9,7 @@
 
 namespace Demo.V1
 
+import Amalgame.Collections
 import Amalgame.String
 import Amalgame.Net.Grpc
 
@@ -34,6 +35,20 @@ public class Program {
             Console.WriteLine("[PASS] typed client: GreeterClient.SayHello → \"" + reply.message + "\"")
         } else {
             Console.WriteLine("[FAIL] typed client got: \"" + reply.message + "\"")
+        }
+
+        // server-streaming: typed client returns List<HelloReply>
+        let many: List<HelloReply> = cli.SayHellos(rq)
+        var streamOk: bool = many.Count() == 2
+        if (streamOk) {
+            let m0: HelloReply = many.Get(0)
+            let m1: HelloReply = many.Get(1)
+            if (m0.message != "Hello, Ada" || m1.message != "Hi again, Ada") { streamOk = false }
+        }
+        if (streamOk) {
+            Console.WriteLine("[PASS] typed streaming client: GreeterClient.SayHellos → 2 replies")
+        } else {
+            Console.WriteLine("[FAIL] typed streaming client (n=" + String_FromInt(many.Count()) + ")")
         }
     }
 }

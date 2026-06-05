@@ -62,13 +62,16 @@ public class HelloReply {
 // gRPC service demo.v1.Greeter — wire typed handlers, then RegisterOn(server).
 public class GreeterService {
     public SayHello: Closure<HelloRequest, HelloReply>
+    public SayHellos: Closure<HelloRequest, List<HelloReply>>
 
     public GreeterService() {
         this.SayHello = null
+        this.SayHellos = null
     }
     public static GreeterService New() { return new GreeterService() }
 
     public GreeterService OnSayHello(Closure<HelloRequest, HelloReply> h) { this.SayHello = h; return this }
+    public GreeterService OnSayHellos(Closure<HelloRequest, List<HelloReply>> h) { this.SayHellos = h; return this }
 
     // Per-method adapter: decode → typed handler → encode.
     public GrpcReply dispatchSayHello(GrpcRequest req) {
@@ -77,11 +80,21 @@ public class GreeterService {
         let outMsg: HelloReply = this.SayHello(inMsg)
         return GrpcReply.Ok(outMsg.Encode())
     }
+    public GrpcStreamReply dispatchSayHellos(GrpcRequest req) {
+        if (this.SayHellos == null) { return GrpcStreamReply.Error(GrpcStatus.Unimplemented(), "demo.v1.Greeter/SayHellos not implemented") }
+        let inMsg: HelloRequest = HelloRequest.Decode(req.Body)
+        let outs: List<HelloReply> = this.SayHellos(inMsg)
+        var frames: List<List<int>> = new List<List<int>>()
+        var _i: int = 0
+        while (_i < outs.Count()) { frames.Add(outs.Get(_i).Encode()); _i = _i + 1 }
+        return GrpcStreamReply.Ok(frames)
+    }
 
     // Register every method on a GrpcServer.
     public void RegisterOn(GrpcServer server) {
         let svc0 = this
         server.Register("/demo.v1.Greeter/SayHello", (r: GrpcRequest) => svc0.dispatchSayHello(r))
+        server.RegisterStream("/demo.v1.Greeter/SayHellos", (r: GrpcRequest) => svc0.dispatchSayHellos(r))
     }
 }
 
@@ -92,12 +105,19 @@ public class GreeterClient {
     public GreeterClient(GrpcClient backend) { this.Backend = backend }
     public static GreeterClient Dial(string host, int port) { return new GreeterClient(GrpcClient.Dial(host, port)) }
 
-    // Returns the decoded reply; on a non-OK status the reply
-    // message is the default-constructed HelloReply (check via a
-    // raw GrpcClient.Call if you need the status).
+    // Unary: returns the decoded reply (check status via a raw
+    // GrpcClient.Call if you need it).
     public HelloReply SayHello(HelloRequest rq) {
         let reply: GrpcReply = this.Backend.Call("/demo.v1.Greeter/SayHello", rq.Encode())
         return HelloReply.Decode(reply.Body)
+    }
+    // Server-streaming: returns every reply message.
+    public List<HelloReply> SayHellos(HelloRequest rq) {
+        let sreply: GrpcStreamReply = this.Backend.CallStream("/demo.v1.Greeter/SayHellos", rq.Encode())
+        var outs: List<HelloReply> = new List<HelloReply>()
+        var _i: int = 0
+        while (_i < sreply.Messages.Count()) { outs.Add(HelloReply.Decode(sreply.Messages.Get(_i))); _i = _i + 1 }
+        return outs
     }
 }
 

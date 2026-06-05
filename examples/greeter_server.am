@@ -22,6 +22,17 @@ public class Program {
         out.message = "Hello, " + rq.name
         return out
     }
+    // server-streaming: greet twice
+    static List<HelloReply> sayHellos(HelloRequest rq) {
+        var outs: List<HelloReply> = new List<HelloReply>()
+        let a: HelloReply = HelloReply.New()
+        a.message = "Hello, " + rq.name
+        outs.Add(a)
+        let b: HelloReply = HelloReply.New()
+        b.message = "Hi again, " + rq.name
+        outs.Add(b)
+        return outs
+    }
     static int EnvInt(string name, int dflt) {
         var n: int = 0
         @c {
@@ -37,6 +48,7 @@ public class Program {
 
         let svc: GreeterService = GreeterService.New()
             .OnSayHello((rq: HelloRequest) => Program.sayHello(rq))
+            .OnSayHellos((rq: HelloRequest) => Program.sayHellos(rq))
         let srv: GrpcServer = GrpcServer.New()
         svc.RegisterOn(srv)
         srv.ServeH2c(port)
