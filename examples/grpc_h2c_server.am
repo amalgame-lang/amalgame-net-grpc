@@ -1,0 +1,39 @@
+// examples/grpc_h2c_server.am — a minimal gRPC server over HTTP/2
+// cleartext (h2c). Registers one unary method that echoes the request
+// message back, then serves forever (until SIGINT/SIGTERM).
+//
+//   NS_GRPC_PORT=50051 grpc_h2c_server
+//
+// Test it with grpcurl (plaintext / h2c):
+//   grpcurl -plaintext -d '...' localhost:50051 echo.Echo/Ping
+//
+// (A real service would decode req.Body with ProtoReader and build the
+// reply with ProtoWriter from amalgame-formats-protobuf; this echo skips
+// that to stay dependency-light and protocol-illustrative.)
+
+namespace Example
+
+import Amalgame.Net.Grpc
+
+public class Program {
+    static int EnvInt(string name, int dflt) {
+        var n: int = 0
+        @c {
+            const char* v = getenv((const char*) name);
+            n = (v && v[0]) ? atoi(v) : (long long) dflt;
+        }
+        return n
+    }
+
+    public static void Main(string[] args) {
+        let port: int = Program.EnvInt("NS_GRPC_PORT", 50051)
+        Console.WriteLine("grpc_h2c_server: listening on :" + String_FromInt(port))
+
+        let srv = GrpcServer.New()
+            .Register("/echo.Echo/Ping",
+                (req: GrpcRequest) => GrpcReply.Ok(req.Body))
+
+        let rc: int = srv.ServeH2c(port)
+        Console.WriteLine("grpc_h2c_server: exited rc=" + String_FromInt(rc))
+    }
+}

@@ -36,6 +36,7 @@ namespace Amalgame.Net.Grpc
 
 import Amalgame.Collections
 import Amalgame.String
+import Amalgame.Net.Http    // H2Server / H2Conn — the HTTP/2 (h2c) transport
 
 // Canonical gRPC status codes (https://grpc.io/docs/guides/status-codes).
 public class GrpcStatus {
@@ -210,5 +211,45 @@ public class GrpcServer {
     // before the grpc-status trailer).
     public static List<int> ResponseFrame(GrpcReply reply) {
         return GrpcFrame.Encode(reply.Body)
+    }
+
+    // Serve gRPC over HTTP/2 cleartext (h2c) — the real end-to-end path.
+    // Binds `port`, and for each request reads the :path + the framed
+    // request body (binary-safe via H2Conn.BodyByteAt), dispatches to the
+    // registered handler, and answers with H2Conn.RespondGrpc — which
+    // emits the DATA plus the grpc-status / grpc-message HTTP/2 trailers
+    // (net-http v0.22.0). Blocks until SIGINT/SIGTERM. Returns 0 on clean
+    // shutdown, -1 if the listen failed.
+    //
+    // h2c (cleartext) suits internal service-to-service traffic; front it
+    // with TLS termination (a proxy, or a future Https path) for public
+    // endpoints. Unary only in v0.x (one request → one reply per stream).
+    public int ServeH2c(int port) {
+        let srv = H2Server.Listen(port, 64)
+        if (!H2Server.IsListening(srv)) { return -1 }
+        while (H2Server.IsListening(srv) && !Http1.IsStopping()) {
+            let conn = H2Server.Accept(srv)
+            if (conn != null) {
+                var sid: int = H2Conn.NextRequest(conn)
+                while (sid > 0) {
+                    let path: string = H2Conn.Path(conn)
+                    let blen: int = H2Conn.BodyLen(conn)
+                    var body: List<int> = new List<int>()
+                    var i: int = 0
+                    while (i < blen) {
+                        let b: int = H2Conn.BodyByteAt(conn, i)
+                        if (b >= 0) { body.Add(b) }
+                        i = i + 1
+                    }
+                    let reply: GrpcReply = this.Dispatch(path, body)
+                    let frame: List<int> = GrpcServer.ResponseFrame(reply)
+                    H2Conn.RespondGrpc(conn, frame, reply.Status, reply.Message)
+                    sid = H2Conn.NextRequest(conn)
+                }
+                H2Conn.Close(conn)
+            }
+        }
+        H2Server.Close(srv)
+        return 0
     }
 }

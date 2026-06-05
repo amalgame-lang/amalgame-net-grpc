@@ -17,10 +17,8 @@ let srv = GrpcServer.New()
             // decode req.Body with ProtoReader, build a reply message
             ProtoWriter.New().Str(1, "Hello").ToBytes()))
 
-// A frontend (HTTP/2) hands the path + framed request body in; the
-// reply body goes back as DATA and reply.Status as the grpc-status trailer.
-let reply = srv.Dispatch(path, requestFrame)
-let wire  = GrpcServer.ResponseFrame(reply)
+// Serve it end-to-end over HTTP/2 cleartext (h2c):
+srv.ServeH2c(50051)   // blocks; accept → dispatch → RespondGrpc (trailers)
 ```
 
 ## What's here
@@ -35,16 +33,25 @@ let wire  = GrpcServer.ResponseFrame(reply)
 - **`GrpcServer`** — `Register(path, handler)` + `Dispatch(path, requestFrame)`
   (unknown path → `UNIMPLEMENTED`) + `ResponseFrame(reply)`.
 
-## Scope (v0.1.0 — honest)
+## End-to-end serving (v0.2.0)
 
-Core only. **The HTTP/2 serving itself is NOT here yet:** gRPC requires
-the `grpc-status` / `grpc-message` HTTP/2 **trailers** and a binary-safe
-request body, and `amalgame-net-http`'s nghttp2 binding doesn't expose
-either today (`H2Conn_Respond` sends fixed headers with no trailers;
-`H2Conn_Body` is a NUL-truncating string). Wiring that — so a real gRPC
-client like `grpcurl` can talk to a Mosaic service end-to-end — is the
-next milestone. Also to come: `.proto` IDL codegen, client stubs,
-streaming (the framing already supports it per-message), and compression.
+`GrpcServer.ServeH2c(port)` serves real gRPC over HTTP/2 cleartext: it
+accepts connections, reads the `:path` + the binary-safe framed request
+body, dispatches to the registered handler, and answers via net-http
+v0.22.0's `RespondGrpc` (which emits the `grpc-status`/`grpc-message`
+HTTP/2 trailers). **Proven end-to-end:** a compiled Amalgame server
+answers a real `nghttp2` client over TCP — `:status 200` +
+`content-type application/grpc` + `grpc-status 0` + a framed echo body
+byte-exact. See `examples/grpc_h2c_server.am`.
+
+h2c suits internal service-to-service traffic; front it with TLS for
+public endpoints. Unary only in v0.x.
+
+## Scope — honest
+
+**Remaining:** `.proto` IDL codegen + client stubs + streaming (the
+framing already supports multiple messages per stream) + compression +
+a `grpcurl` interop pass.
 
 ## Build & test
 
@@ -52,9 +59,10 @@ streaming (the framing already supports it per-message), and compression.
 ./tests/run_tests.sh          # 7 tests: framing/BE-length/dispatch, binary-safe
 ```
 
-Self-contained for testing (only `amc` + a C toolchain + `libgc`). At
-runtime, handlers use `amalgame-formats-protobuf` to (de)serialize
-messages — declared as a dependency.
+Needs `amc`, a C toolchain, `libgc`/`libnghttp2`/`libssl`, and the
+sibling `amalgame-net-http` (+ `amalgame-tls`, `amalgame-async`) on disk
+or via `amc package add` — `ServeH2c` builds on net-http's H2 transport.
+Handlers use `amalgame-formats-protobuf` to (de)serialize messages.
 
 ## License
 

@@ -1,7 +1,15 @@
 #!/bin/bash
-# amalgame-net-grpc — test runner (self-contained: amc + libgc).
+# amalgame-net-grpc — test runner.
+#
+# The gRPC core unit tests are pure, but the facade now also exposes
+# GrpcServer.ServeH2c, which imports Amalgame.Net.Http (H2Server/H2Conn).
+# amc resolves those stdlib classes through the PkgRegistry, so we stage
+# a fake package cache + amalgame.lock pointing at the sibling net-http
+# (+ async, whose runtime header net-http includes) — the same dance
+# amalgame-net-proxy uses. tls is needed only as an -I include path.
 set -u
 PKG_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 AMC=""
 if   [ -n "${1:-}" ];                   then AMC="$1"
 elif command -v amc >/dev/null 2>&1;    then AMC="$(command -v amc)"
@@ -9,20 +17,80 @@ elif [ -x "$PKG_DIR/../Amalgame/amc" ]; then AMC="$PKG_DIR/../Amalgame/amc"
 elif [ -x "$HOME/.local/bin/amc" ];     then AMC="$HOME/.local/bin/amc"
 fi
 [ -x "$AMC" ] || { echo "error: amc not found"; exit 2; }
+
 RUNTIME_DIR=""
 if   [ -n "${AMC_RUNTIME:-}" ] && [ -d "$AMC_RUNTIME" ]; then RUNTIME_DIR="$AMC_RUNTIME"
 elif [ -d "$PKG_DIR/../Amalgame/runtime" ];             then RUNTIME_DIR="$PKG_DIR/../Amalgame/runtime"
 elif [ -d "$HOME/.amalgame/runtime" ];                  then RUNTIME_DIR="$HOME/.amalgame/runtime"
 fi
-BUILD_DIR=$(mktemp -d); trap 'rm -rf "$BUILD_DIR"' EXIT
+
+resolve() {  # $1=env var, $2=repo name, $3=needed-file
+    local v="${!1:-}"
+    if [ -n "$v" ] && [ -d "$v" ]; then echo "$v"; return; fi
+    if [ -d "$PKG_DIR/../$2" ] && [ -e "$PKG_DIR/../$2/$3" ]; then echo "$PKG_DIR/../$2"; return; fi
+    echo ""
+}
+NETHTTP_DIR="$(resolve AMALGAME_NET_HTTP amalgame-net-http facade.am)"
+TLS_DIR="$(resolve AMALGAME_TLS amalgame-tls runtime)"
+ASYNC_DIR="$(resolve AMALGAME_ASYNC amalgame-async amalgame.toml)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+[ -n "$NETHTTP_DIR" ] || { echo -e "${RED}error: amalgame-net-http not found${NC}"; exit 2; }
+[ -n "$TLS_DIR" ]     || { echo -e "${RED}error: amalgame-tls not found${NC}"; exit 2; }
+[ -n "$ASYNC_DIR" ]   || { echo -e "${RED}error: amalgame-async not found${NC}"; exit 2; }
+
+BUILD_DIR=$(mktemp -d -t amalgame-net-grpc-XXXXXX)
+EXISTING_LOCK=""
+[ -f "$PKG_DIR/amalgame.lock" ] && { EXISTING_LOCK="$BUILD_DIR/lock.bak"; cp "$PKG_DIR/amalgame.lock" "$EXISTING_LOCK"; }
+cleanup() {
+    rm -rf "$BUILD_DIR"
+    if [ -n "$EXISTING_LOCK" ] && [ -f "$EXISTING_LOCK" ]; then mv "$EXISTING_LOCK" "$PKG_DIR/amalgame.lock"
+    else rm -f "$PKG_DIR/amalgame.lock"; fi
+}
+trap cleanup EXIT
+
+FAKE_CACHE="$BUILD_DIR/pkg_cache"
+link_pkg() {  # $1=dir $2=git-path $3=tag $4=sha
+    local d="$FAKE_CACHE/$2/${3}_${4:0:8}"
+    mkdir -p "$(dirname "$d")"; rm -rf "$d"; ln -s "$1" "$d"
+}
+link_pkg "$NETHTTP_DIR" "github.com/amalgame-lang/amalgame-net-http" "v0.22.0" "abcdef0123456789000000000000000000000ef"
+link_pkg "$ASYNC_DIR"   "github.com/amalgame-lang/amalgame-async"    "v0.2.0"  "fedcba9876543210000000000000000000000ff"
+export AMALGAME_PACKAGES_DIR="$FAKE_CACHE"
+
+cat > "$PKG_DIR/amalgame.lock" <<EOF
+[[package]]
+name = "amalgame-net-http"
+git  = "github.com/amalgame-lang/amalgame-net-http"
+tag  = "v0.22.0"
+rev  = "abcdef0123456789000000000000000000000ef"
+
+[[package]]
+name = "amalgame-async"
+git  = "github.com/amalgame-lang/amalgame-async"
+tag  = "v0.2.0"
+rev  = "fedcba9876543210000000000000000000000ff"
+EOF
+
 cd "$PKG_DIR"
+INCS="-Iruntime -I$NETHTTP_DIR/runtime -I$TLS_DIR/runtime -I$ASYNC_DIR/runtime -I$RUNTIME_DIR"
+LIBS="-lnghttp2 -lssl -lcrypto -lpthread -lgc -lm -lz"
+FAILED=0
+
+NH_SRCS="$NETHTTP_DIR/facade.am $NETHTTP_DIR/cookie.am $NETHTTP_DIR/http_request.am $NETHTTP_DIR/http_response.am $NETHTTP_DIR/http_parser.am $NETHTTP_DIR/http_server.am $NETHTTP_DIR/http_client.am $NETHTTP_DIR/multipart.am $NETHTTP_DIR/sse.am"
+"$AMC" --lib -o "$BUILD_DIR/nh" $NH_SRCS >/dev/null 2>&1
+gcc -O2 $INCS -c "$BUILD_DIR/nh.c" -o "$BUILD_DIR/nh.o" 2>"$BUILD_DIR/e" \
+    || { echo -e "${RED}net-http build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+
 "$AMC" --lib -o "$BUILD_DIR/facade" facade.am >/dev/null 2>&1
-gcc -O2 -Iruntime -I"$RUNTIME_DIR" -c "$BUILD_DIR/facade.c" -o "$BUILD_DIR/facade.o" 2>"$BUILD_DIR/e" \
+gcc -O2 $INCS -c "$BUILD_DIR/facade.c" -o "$BUILD_DIR/facade.o" 2>"$BUILD_DIR/e" \
     || { echo -e "${RED}facade build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+
+echo -e "\n── core tests ──"
 "$AMC" -o "$BUILD_DIR/t" tests/grpc_test.am --external facade.am >/dev/null 2>&1
-gcc -O2 -Iruntime -I"$RUNTIME_DIR" "$BUILD_DIR/t.c" "$BUILD_DIR/facade.o" -lgc -lm -o "$BUILD_DIR/t" 2>"$BUILD_DIR/e" \
+gcc -O2 $INCS "$BUILD_DIR/t.c" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" $LIBS -o "$BUILD_DIR/t" 2>"$BUILD_DIR/e" \
     || { echo -e "${RED}test build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
 OUT="$("$BUILD_DIR/t")"; echo "$OUT"
-echo "$OUT" | grep -q "\[FAIL\]" && { echo -e "${RED}FAILED${NC}"; exit 1; }
-echo -e "${GREEN}All tests passed${NC}"
+echo "$OUT" | grep -q "\[FAIL\]" && FAILED=1
+
+echo ""
+if [ "$FAILED" -eq 0 ]; then echo -e "${GREEN}All tests passed${NC}"; else echo -e "${RED}FAILED${NC}"; exit 1; fi
