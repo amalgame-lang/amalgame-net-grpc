@@ -99,6 +99,22 @@ grpc-status trailer — a valid gRPC server-streaming response. Proven
 end-to-end (3 messages, binary-safe). True incremental flush + client/
 bidi streaming are later net-http work.
 
+## Interop (grpcurl)
+
+The test suite includes a **reference-client interop test**: the canonical
+gRPC CLI [`grpcurl`](https://github.com/fullstorydev/grpcurl) calls a typed
+`Greeter` server (`examples/greeter_server.am`) and must get
+`{"message":"Hello, Ada"}` back:
+
+```bash
+grpcurl -plaintext -import-path tests -proto greeter.proto \
+        -d '{"name":"Ada"}' localhost:50051 demo.v1.Greeter/SayHello
+```
+
+So the server speaks real, standard gRPC — not just our own client. CI
+downloads grpcurl automatically; the local runner uses it if `grpcurl` is
+on `PATH` (or `GRPCURL=<path>`), and skips otherwise.
+
 ## Scope — honest
 
 **Remaining:** `.proto` IDL codegen + client stubs + streaming (the

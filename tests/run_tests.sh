@@ -115,6 +115,28 @@ else
         || { echo -e "${RED}service test build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
     OUT2="$("$BUILD_DIR/svc")"; echo "$OUT2"
     echo "$OUT2" | grep -q "\[FAIL\]" && FAILED=1
+
+    # ── grpcurl interop (the reference gRPC client calls our server) ──
+    GRPCURL="${GRPCURL:-}"
+    [ -z "$GRPCURL" ] && command -v grpcurl >/dev/null 2>&1 && GRPCURL="$(command -v grpcurl)"
+    echo -e "\n── grpcurl interop (reference client → typed Greeter) ──"
+    if [ -z "$GRPCURL" ] || [ ! -x "$GRPCURL" ]; then
+        echo "grpcurl not found — skipping (set GRPCURL=<path> or install it; CI provides it)"
+    else
+        "$AMC" -o "$BUILD_DIR/gsrv" examples/greeter_server.am --external facade.am --external "$PB_DIR/facade.am" --external tests/greeter_pb.am >/dev/null 2>&1
+        gcc -O2 $PINC "$BUILD_DIR/gsrv.c" "$BUILD_DIR/greeter.o" "$BUILD_DIR/facade.o" "$BUILD_DIR/nh.o" "$BUILD_DIR/pb.o" $LIBS -o "$BUILD_DIR/gsrv" 2>"$BUILD_DIR/e" \
+            || { echo -e "${RED}greeter server build failed${NC}"; cat "$BUILD_DIR/e"; exit 1; }
+        GPORT=50098
+        NS_GRPC_PORT=$GPORT "$BUILD_DIR/gsrv" >/dev/null 2>&1 & GSRV=$!
+        sleep 0.6
+        GOUT="$("$GRPCURL" -plaintext -import-path tests -proto greeter.proto -d '{"name":"Ada"}' 127.0.0.1:$GPORT demo.v1.Greeter/SayHello 2>&1)"
+        kill "$GSRV" 2>/dev/null
+        if echo "$GOUT" | grep -q "Hello, Ada"; then
+            echo -e "${GREEN}[PASS]${NC} grpcurl → SayHello returns \"Hello, Ada\""
+        else
+            echo -e "${RED}[FAIL]${NC} grpcurl interop: $GOUT"; FAILED=1
+        fi
+    fi
 fi
 
 # ── end-to-end: AM gRPC client ↔ AM gRPC server over TCP (h2c) ─────

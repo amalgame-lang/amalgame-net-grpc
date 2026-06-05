@@ -1,0 +1,44 @@
+// examples/greeter_server.am — a real typed gRPC server for the Greeter
+// service in tests/greeter.proto, serving over h2c. Used by the grpcurl
+// interop test: a reference gRPC client (grpcurl) calls SayHello and
+// must get back {"message":"Hello, <name>"}.
+//
+//   NS_GRPC_PORT=50051 greeter_server
+//   grpcurl -plaintext -import-path tests -proto greeter.proto \
+//           -d '{"name":"Ada"}' localhost:50051 demo.v1.Greeter/SayHello
+//
+// Same namespace as the generated tests/greeter_pb.am (Demo.V1) so the
+// generated GreeterService / HelloRequest / HelloReply resolve directly.
+
+namespace Demo.V1
+
+import Amalgame.Collections
+import Amalgame.String
+import Amalgame.Net.Grpc
+
+public class Program {
+    static HelloReply sayHello(HelloRequest rq) {
+        let out: HelloReply = HelloReply.New()
+        out.message = "Hello, " + rq.name
+        return out
+    }
+    static int EnvInt(string name, int dflt) {
+        var n: int = 0
+        @c {
+            const char* v = getenv((const char*) name);
+            n = (v && v[0]) ? atoi(v) : (long long) dflt;
+        }
+        return n
+    }
+
+    public static void Main(string[] args) {
+        let port: int = Program.EnvInt("NS_GRPC_PORT", 50051)
+        Console.WriteLine("greeter_server: h2c on :" + String_FromInt(port))
+
+        let svc: GreeterService = GreeterService.New()
+            .OnSayHello((rq: HelloRequest) => Program.sayHello(rq))
+        let srv: GrpcServer = GrpcServer.New()
+        svc.RegisterOn(srv)
+        srv.ServeH2c(port)
+    }
+}

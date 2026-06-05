@@ -22,6 +22,14 @@ jobs:
         with: { repository: amalgame-lang/amalgame-formats-protobuf, ref: v0.2.1, path: amalgame-formats-protobuf }
       - name: Install system deps
         run: sudo apt-get update -qq && sudo apt-get install -y libgc-dev libssl-dev libnghttp2-dev
+      - name: Install grpcurl (reference gRPC client for the interop test)
+        run: |
+          set -e
+          GV=1.9.1
+          curl -sSL -o /tmp/grpcurl.tgz "https://github.com/fullstorydev/grpcurl/releases/download/v${GV}/grpcurl_${GV}_linux_x86_64.tar.gz"
+          tar -xzf /tmp/grpcurl.tgz -C /tmp grpcurl
+          chmod +x /tmp/grpcurl
+          echo "GRPCURL=/tmp/grpcurl" >> $GITHUB_ENV
       - name: Download amc ${{ matrix.amc-tag }}
         run: |
           set -e
@@ -37,4 +45,5 @@ jobs:
           AMALGAME_TLS:      ${{ github.workspace }}/amalgame-tls
           AMALGAME_ASYNC:    ${{ github.workspace }}/amalgame-async
           AMALGAME_FORMATS_PROTOBUF: ${{ github.workspace }}/amalgame-formats-protobuf
+          GRPCURL: ${{ env.GRPCURL }}
         run: ./tests/run_tests.sh "$AMC"
