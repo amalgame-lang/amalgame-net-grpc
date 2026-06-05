@@ -151,6 +151,25 @@ else
     TOUT="$(NS_GRPC_PORT=$TPORT timeout 15 "$BUILD_DIR/greeter_client")"; echo "$TOUT"
     kill "$TSRV" 2>/dev/null
     echo "$TOUT" | grep -q "\[PASS\]" || FAILED=1
+
+    # ── gRPC over TLS (ServeHttps) validated by grpcurl ──────────────
+    echo -e "\n── gRPC over TLS (ServeHttps) via grpcurl ──"
+    if [ -z "$GRPCURL" ] || ! command -v openssl >/dev/null 2>&1; then
+        echo "grpcurl/openssl not available — skipping TLS interop"
+    else
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout "$BUILD_DIR/g.key" -out "$BUILD_DIR/g.crt" \
+            -days 2 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+        SPORT=50102
+        NS_GRPC_PORT=$SPORT NS_GRPC_CERT="$BUILD_DIR/g.crt" NS_GRPC_KEY="$BUILD_DIR/g.key" "$BUILD_DIR/greeter_server" >/dev/null 2>&1 & STSRV=$!
+        sleep 0.8
+        SOUT="$("$GRPCURL" -insecure -authority localhost -import-path tests -proto greeter.proto -d '{"name":"Bob"}' 127.0.0.1:$SPORT demo.v1.Greeter/SayHello 2>&1)"
+        kill "$STSRV" 2>/dev/null
+        if echo "$SOUT" | grep -q "Hello, Bob"; then
+            echo -e "${GREEN}[PASS]${NC} grpcurl over TLS → \"Hello, Bob\""
+        else
+            echo -e "${RED}[FAIL]${NC} TLS interop: $SOUT"; FAILED=1
+        fi
+    fi
 fi
 
 # ── end-to-end: AM gRPC client ↔ AM gRPC server over TCP (h2c) ─────

@@ -294,6 +294,23 @@ public class GrpcServer {
     }
 
 
+    // Build the wire response for a request: a unary reply framed, or a
+    // server-streaming reply's N frames concatenated. Returns a GrpcReply
+    // whose Body is the DATA to ship and whose Status/Message become the
+    // trailer. Shared by the h2c and TLS serve loops.
+    public GrpcReply buildResponse(string path, List<int> reqBody) {
+        let sm: GrpcStreamMethod = this.lookupStream(path)
+        if (sm != null) {
+            let sreply: GrpcStreamReply = this.DispatchStream(path, reqBody)
+            return new GrpcReply(sreply.Status, sreply.Message, GrpcServer.StreamResponseBody(sreply))
+        }
+        let reply: GrpcReply = this.Dispatch(path, reqBody)
+        return new GrpcReply(reply.Status, reply.Message, GrpcServer.ResponseFrame(reply))
+    }
+
+    // Read the binary-safe request body off an H2 connection (shared).
+    // (Static so the conn is an inferred local, never an annotated param.)
+
     // Serve gRPC over HTTP/2 cleartext (h2c) — the real end-to-end path.
     // Binds `port`, and for each request reads the :path + the framed
     // request body (binary-safe via H2Conn.BodyByteAt), dispatches to the
@@ -322,23 +339,47 @@ public class GrpcServer {
                         if (b >= 0) { body.Add(b) }
                         i = i + 1
                     }
-                    let sm: GrpcStreamMethod = this.lookupStream(path)
-                    if (sm != null) {
-                        // server streaming: N frames + one trailer
-                        let sreply: GrpcStreamReply = this.DispatchStream(path, body)
-                        let sbody: List<int> = GrpcServer.StreamResponseBody(sreply)
-                        H2Conn.RespondGrpc(conn, sbody, sreply.Status, sreply.Message)
-                    } else {
-                        let reply: GrpcReply = this.Dispatch(path, body)
-                        let frame: List<int> = GrpcServer.ResponseFrame(reply)
-                        H2Conn.RespondGrpc(conn, frame, reply.Status, reply.Message)
-                    }
+                    let resp: GrpcReply = this.buildResponse(path, body)
+                    H2Conn.RespondGrpc(conn, resp.Body, resp.Status, resp.Message)
                     sid = H2Conn.NextRequest(conn)
                 }
                 H2Conn.Close(conn)
             }
         }
         H2Server.Close(srv)
+        return 0
+    }
+
+    // Serve gRPC over HTTP/2 with TLS (ALPN h2) — production gRPC. Same
+    // dispatch as ServeH2c, but the listener terminates TLS
+    // (HttpsServer, certFile/keyFile PEM) and the H2 connection's I/O
+    // goes through OpenSSL transparently. Returns 0 on clean shutdown,
+    // -1 if the listen/cert failed.
+    public int ServeHttps(int port, string certFile, string keyFile) {
+        let srv = HttpsServer.Listen(port, certFile, keyFile, 64)
+        if (!HttpsServer.IsListening(srv)) { return -1 }
+        while (HttpsServer.IsListening(srv) && !Http1.IsStopping()) {
+            let conn = HttpsServer.Accept(srv)
+            if (conn != null) {
+                var sid: int = H2Conn.NextRequest(conn)
+                while (sid > 0) {
+                    let path: string = H2Conn.Path(conn)
+                    let blen: int = H2Conn.BodyLen(conn)
+                    var body: List<int> = new List<int>()
+                    var i: int = 0
+                    while (i < blen) {
+                        let b: int = H2Conn.BodyByteAt(conn, i)
+                        if (b >= 0) { body.Add(b) }
+                        i = i + 1
+                    }
+                    let resp: GrpcReply = this.buildResponse(path, body)
+                    H2Conn.RespondGrpc(conn, resp.Body, resp.Status, resp.Message)
+                    sid = H2Conn.NextRequest(conn)
+                }
+                H2Conn.Close(conn)
+            }
+        }
+        HttpsServer.Close(srv)
         return 0
     }
 }

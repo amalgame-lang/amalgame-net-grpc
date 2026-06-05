@@ -81,6 +81,16 @@ from the grpc-status trailer. **Proven end-to-end:** an Amalgame client
 talks to an Amalgame `ServeH2c` server over TCP — echo round-trip incl. a
 NUL byte + `grpc-status 0` (`examples/grpc_h2c_client.am`).
 
+## gRPC over TLS (v0.5.0)
+
+```amalgame
+GrpcServer.New() /* ...RegisterOn... */ .ServeHttps(443, "cert.pem", "key.pem")
+```
+
+`ServeHttps` serves HTTP/2 with ALPN `h2` over OpenSSL — production gRPC.
+Same dispatch as `ServeH2c`; the H2 connection's I/O is TLS-wrapped.
+Validated by `grpcurl` over TLS (`-insecure` with a self-signed cert).
+
 ## Server streaming (v0.4.0)
 
 ```amalgame
