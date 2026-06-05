@@ -53,7 +53,7 @@ link_pkg() {  # $1=dir $2=git-path $3=tag $4=sha
     local d="$FAKE_CACHE/$2/${3}_${4:0:8}"
     mkdir -p "$(dirname "$d")"; rm -rf "$d"; ln -s "$1" "$d"
 }
-link_pkg "$NETHTTP_DIR" "github.com/amalgame-lang/amalgame-net-http" "v0.23.0" "abcdef0123456789000000000000000000000ef"
+link_pkg "$NETHTTP_DIR" "github.com/amalgame-lang/amalgame-net-http" "v0.24.0" "abcdef0123456789000000000000000000000ef"
 link_pkg "$ASYNC_DIR"   "github.com/amalgame-lang/amalgame-async"    "v0.2.0"  "fedcba9876543210000000000000000000000ff"
 export AMALGAME_PACKAGES_DIR="$FAKE_CACHE"
 
@@ -61,7 +61,7 @@ cat > "$PKG_DIR/amalgame.lock" <<EOF
 [[package]]
 name = "amalgame-net-http"
 git  = "github.com/amalgame-lang/amalgame-net-http"
-tag  = "v0.23.0"
+tag  = "v0.24.0"
 rev  = "abcdef0123456789000000000000000000000ef"
 
 [[package]]
@@ -169,6 +169,16 @@ else
         else
             echo -e "${RED}[FAIL]${NC} TLS interop: $SOUT"; FAILED=1
         fi
+
+        # typed Amalgame client over TLS ↔ typed TLS server
+        echo -e "\n── typed TLS e2e: GreeterClient.DialTls ↔ ServeHttps ──"
+        CPORT=50103
+        NS_GRPC_PORT=$CPORT NS_GRPC_CERT="$BUILD_DIR/g.crt" NS_GRPC_KEY="$BUILD_DIR/g.key" "$BUILD_DIR/greeter_server" >/dev/null 2>&1 & CTSRV=$!
+        sleep 0.8
+        CTOUT="$(NS_GRPC_PORT=$CPORT NS_GRPC_TLS=1 timeout 15 "$BUILD_DIR/greeter_client")"; echo "$CTOUT"
+        kill "$CTSRV" 2>/dev/null
+        echo "$CTOUT" | grep -q "\[PASS\]" || FAILED=1
+        echo "$CTOUT" | grep -q "\[FAIL\]" && FAILED=1
     fi
 fi
 

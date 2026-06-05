@@ -399,19 +399,43 @@ public class GrpcServer {
 // amc lowers an explicit `H2Client` type to a name that doesn't match
 // the C-runtime struct; inference off H2Client.ConnectH2c is correct.
 public class GrpcClient {
-    public Host: string
-    public Port: int
+    public Host:     string
+    public Port:     int
+    public Tls:      bool   // h2 over TLS instead of h2c
+    public Insecure: bool   // skip cert/hostname verification (self-signed)
 
-    public GrpcClient(string host, int port) { this.Host = host; this.Port = port }
+    public GrpcClient(string host, int port) {
+        this.Host = host
+        this.Port = port
+        this.Tls = false
+        this.Insecure = false
+    }
     public static GrpcClient Dial(string host, int port) {
         return new GrpcClient(host, port)
     }
+    // gRPC over TLS. `insecure` skips cert/hostname verification (for
+    // self-signed certs / dev); use false in production.
+    public static GrpcClient DialTls(string host, int port, bool insecure) {
+        let c = new GrpcClient(host, port)
+        c.Tls = true
+        c.Insecure = insecure
+        return c
+    }
+
+    // Open a connection for one call. The H2Client handle stays a local
+    // (never an annotated field/param — amc would mis-lower the type), so
+    // the h2c/TLS choice lives here. (TLS path opens cleanly; the h2c
+    // default is replaced when Tls is set.)
+    // NOTE: returns via the caller inlining — see Call/CallStream.
 
     // Unary call. On a transport failure returns UNAVAILABLE; otherwise
     // the grpc-status trailer drives the GrpcReply status, and Body is
     // the unframed reply message bytes.
     public GrpcReply Call(string path, List<int> message) {
-        let conn = H2Client.ConnectH2c(this.Host, this.Port)
+        var ins: int = 0
+        if (this.Insecure) { ins = 1 }
+        var conn = H2Client.ConnectTls(this.Host, this.Port, ins)
+        if (!this.Tls) { H2Client.Close(conn); conn = H2Client.ConnectH2c(this.Host, this.Port) }
         if (!H2Client.IsConnected(conn)) {
             return GrpcReply.Error(GrpcStatus.Unavailable(), "connect failed")
         }
@@ -445,7 +469,10 @@ public class GrpcClient {
     // message (the server sends N length-prefixed frames before the
     // grpc-status trailer). Status comes from the trailer.
     public GrpcStreamReply CallStream(string path, List<int> message) {
-        let conn = H2Client.ConnectH2c(this.Host, this.Port)
+        var ins: int = 0
+        if (this.Insecure) { ins = 1 }
+        var conn = H2Client.ConnectTls(this.Host, this.Port, ins)
+        if (!this.Tls) { H2Client.Close(conn); conn = H2Client.ConnectH2c(this.Host, this.Port) }
         if (!H2Client.IsConnected(conn)) {
             return GrpcStreamReply.Error(GrpcStatus.Unavailable(), "connect failed")
         }

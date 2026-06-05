@@ -13,13 +13,13 @@ jobs:
       # GrpcServer.ServeH2c imports Amalgame.Net.Http; the runner stages a
       # fake package cache from these siblings.
       - uses: actions/checkout@v4
-        with: { repository: amalgame-lang/amalgame-net-http, ref: v0.23.0, path: amalgame-net-http }
+        with: { repository: amalgame-lang/amalgame-net-http, ref: v0.24.0, path: amalgame-net-http }
       - uses: actions/checkout@v4
         with: { repository: amalgame-lang/amalgame-tls, ref: v0.3.3, path: amalgame-tls }
       - uses: actions/checkout@v4
         with: { repository: amalgame-lang/amalgame-async, ref: v0.2.2, path: amalgame-async }
       - uses: actions/checkout@v4
-        with: { repository: amalgame-lang/amalgame-formats-protobuf, ref: v0.2.3, path: amalgame-formats-protobuf }
+        with: { repository: amalgame-lang/amalgame-formats-protobuf, ref: v0.2.4, path: amalgame-formats-protobuf }
       - name: Install system deps
         run: sudo apt-get update -qq && sudo apt-get install -y libgc-dev libssl-dev libnghttp2-dev
       - name: Install grpcurl (reference gRPC client for the interop test)

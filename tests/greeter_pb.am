@@ -104,6 +104,8 @@ public class GreeterClient {
 
     public GreeterClient(GrpcClient backend) { this.Backend = backend }
     public static GreeterClient Dial(string host, int port) { return new GreeterClient(GrpcClient.Dial(host, port)) }
+    // gRPC over TLS (insecure = skip cert/hostname verification).
+    public static GreeterClient DialTls(string host, int port, bool insecure) { return new GreeterClient(GrpcClient.DialTls(host, port, insecure)) }
 
     // Unary: returns the decoded reply (check status via a raw
     // GrpcClient.Call if you need it).

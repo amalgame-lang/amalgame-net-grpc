@@ -25,7 +25,12 @@ public class Program {
 
     public static void Main(string[] args) {
         let port: int = Program.EnvInt("NS_GRPC_PORT", 50051)
-        let cli: GreeterClient = GreeterClient.Dial("127.0.0.1", port)
+        // NS_GRPC_TLS=1 → connect over TLS (insecure, for the self-signed
+        // test cert); else plaintext h2c.
+        var cli: GreeterClient = GreeterClient.Dial("127.0.0.1", port)
+        if (Program.EnvInt("NS_GRPC_TLS", 0) == 1) {
+            cli = GreeterClient.DialTls("localhost", port, true)
+        }
 
         let rq: HelloRequest = HelloRequest.New()
         rq.name = "Ada"
